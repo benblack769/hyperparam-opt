@@ -1,0 +1,7 @@
+dim_ranges:
+    count:
+        type: discrete
+        possibilities: 4
+    perc:
+        type: continuous
+        range: [0,1]

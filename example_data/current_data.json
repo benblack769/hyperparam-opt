@@ -1,0 +1,14 @@
+{
+    "data_points": [
+        {
+            "reward": 0.5,
+            "data": {"count":1,"perc":0.5}
+        }
+    ],
+    "guassian_params":{
+        "noise": 0.1,
+        "length_scales": {
+            "perc": 0.1
+        }
+    }
+}
