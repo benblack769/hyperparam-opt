@@ -5,3 +5,6 @@ dim_ranges:
     perc:
         type: continuous
         range: [0,1]
+    ratio:
+        type: multiplicative
+        range: [0.0001,1.0]
