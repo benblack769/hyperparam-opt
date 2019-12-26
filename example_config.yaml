@@ -1,12 +1,14 @@
-dim_ranges:
+dim_ranges: #define all your variables
     count:
         type: discrete
-        possibilities: 4
+        possibilities: 4 # possiblity names are 0,1,2,3
     perc:
         type: continuous
-        range: [0,1]
+        range: [0,1] # normal contniuous range (floating point numbers)
     ratio:
         type: multiplicative
-        range: [0.0001,1.0]
-aprox_reward_stdev: 0.5
-num_fidelities: 2
+        range: [0.0001,1.0] # distance is defined over the log of these values (e.g. 0.1,0.01 are the same distance apart as 100,10 ).
+aprox_reward_stdev: 0.5 # helps define initial values for multifidelity parameters
+aprox_fid_costs: [1,10] # should be non-zero and increasing
+num_fidelities: 2 # number of different functions that can be run
+timeout_evaluation: 100 # the amount of time that goes before it is assumed that points were not evaluated and are requested again in seconds
