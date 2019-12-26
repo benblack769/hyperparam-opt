@@ -8,3 +8,5 @@ dim_ranges:
     ratio:
         type: multiplicative
         range: [0.0001,1.0]
+aprox_reward_stdev: 0.5
+num_fidelities: 2

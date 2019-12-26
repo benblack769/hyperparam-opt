@@ -1,0 +1,26 @@
+dim_ranges:
+    rad_borehole:
+        type: continuous
+        range: [0.05,0.15]
+    radius_influ:
+        type: multiplicative
+        range: [100,50000]
+    transmissivity_upper:
+        type: continuous
+        range: [63070, 115600]
+    potentiometric_upper:
+        type: continuous
+        range: [990, 1110]
+    transmissivity_lower:
+        type: continuous
+        range: [63.1, 116]
+    potentiometric_lower:
+        type: continuous
+        range: [700, 820]
+    length_borehole:
+        type: continuous
+        range: [1120, 1680]
+    conductivity:
+        type: continuous
+        range: [9855, 12045]
+num_fidelities: 2
