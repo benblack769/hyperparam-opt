@@ -2,9 +2,11 @@ import numpy as np
 from transformer import Transformer
 import time
 import sklearn
+import random
 import sklearn.gaussian_process
 import scipydirect
 import math
+import json
 
 class DataPoint:
     def __init__(self,coord,reward,group,fid_level):
@@ -35,6 +37,89 @@ class TempPoint(DataPoint):
     def expired(self,limit):
         return time.time() - self.timestamp > limit
 
+def autotune_metric(coord,config,data_points):
+    assert len(data_points) > 3,"needs more points to properly evaluate hyperparams"
+    #data_points = list(data_points)
+    #random.shuffle(data_points)
+    noise_level = coord['__noise__']
+    #length_scales = {name:c for name,c in coord.items() if name != "__noise__"}
+    dsize = len(data_points)
+    twofold_split = [
+        data_points[:dsize//2],
+        data_points[dsize//2:],
+    ]
+    regset = RegressorSet(config)
+    #regset.length_scales = length_scales
+    regset.noise_hyperparam = noise_level
+    tot = 0
+    for split in range(2):
+        train_data = twofold_split[0^split]
+        test_data = twofold_split[1^split]
+        regset.data_points = train_data
+        regset.retrain(0)
+        xs = np.stack([regset.transformer.transform_point(x.coord) for x in test_data])
+        ys = np.asarray([x.reward for x in test_data],dtype=np.float64)
+        predys,stdevs = regset.regressors[0].predict(xs,return_std=True)
+        num_stdevs = np.abs(ys-predys)**3/stdevs**2
+        tot += np.sum(num_stdevs)
+    return tot
+
+
+def autotune_config(config):
+    # dim_ranges = {name: {
+    #     "type": "multiplicative",
+    #     "range": [1e-2,1.0]
+    # } for name in config['dim_ranges']}
+    dim_ranges = dict()
+    dim_ranges["__noise__"] = {
+        "type": "multiplicative",
+        "range": [1e-7,1e2]
+    }
+
+    new_config = {
+        "num_fidelities": 1,
+        "aprox_reward_stdev": 0.5,
+        "aprox_fid_costs": [1],
+        "timeout_evaluation": 1000,
+        "autotune": False,
+        "dim_ranges": dim_ranges,
+    }
+    return new_config
+
+def binary_search(func,start,end,depth_to_end):
+    if depth_to_end <= 0:
+        return start
+    qval = (end - start) / 4
+    low = start + qval
+    high = start + qval * 3
+    vallow = func(low)
+    valhigh = func(high)
+    mid = start + qval * 2
+    if vallow > valhigh:
+        return binary_search(func,start,mid,depth_to_end-1)
+    else:
+        return binary_search(func,mid,end,depth_to_end-1)
+
+
+def autotune(config,data_points):
+    regset = RegressorSet(autotune_config(config))
+    best_point = None
+    for x in range(100):
+        exec_point = regset.generate_next_point()
+        out_value = autotune_metric(exec_point.coord,config,data_points)
+        new_point = DataPoint(exec_point.coord,out_value,exec_point.group,exec_point.fid_level)
+        regset.add_point(new_point)
+        print(json.dumps(new_point.to_dict(),indent=2))
+        if not best_point or new_point.reward > best_point.reward:
+            best_point = new_point
+
+    coord = best_point.coord
+    noise_level = coord['__noise__']
+    #length_scales = {name:c for name,c in coord.items() if name != "__noise__"}
+
+    return noise_level
+
+
 class RegressorSet:
     def __init__(self,config):
         self.num_fidelities = num_fidelities = config['num_fidelities']
@@ -52,8 +137,9 @@ class RegressorSet:
         # but at the same point. Used for heuristic calculation.
         self.current_group = 0
         self.config = config
+        self.autotune = config['autotune']
 
-        self.noise_hyperparam = 0.01
+        self.noise_hyperparam = 0.1
         self.length_scales = {name: 0.5 for name in config['dim_ranges']}
 
         aprox_stdev = config['aprox_reward_stdev']
@@ -78,10 +164,10 @@ class RegressorSet:
         self.temp_points = [point for point in self.temp_points
                                     if not point.expired(time_limit)]
 
-    def max_reward(self):
+    def rewards(self):
         all_points = self.data_points+self.temp_points
         rewards = [x.reward for x in all_points]
-        return max(rewards)
+        return np.asarray(rewards,dtype=np.float64)
 
     def retrain(self,fid_level):
         self.regressors[fid_level] = sklearn.gaussian_process.GaussianProcessRegressor(
@@ -90,6 +176,10 @@ class RegressorSet:
             optimizer=None,
             #normalize_y=True
         )
+        #if self.autotune and len(self.data_points) % 10 == 6:
+        #    autotuned_res = autotune(self.config,self.data_points)
+        #    print(autotuned_res)
+
         self.remove_old_temp_points()
         all_points = self.data_points+self.temp_points
         fid_points = [point for point in all_points if point.fid_level == fid_level]
@@ -97,8 +187,13 @@ class RegressorSet:
             return
         xs = np.stack([self.transformer.transform_point(p.coord) for p in fid_points])
         ys = np.asarray([p.reward for p in fid_points],dtype=np.float64)
-        ys -= self.max_reward()
+        all_rewards = self.rewards()
+        max_reward = np.max(all_rewards)
+        median_reward = np.median(all_rewards)
+        ys -= median_reward
+        ys /= 2*(max_reward-median_reward+1e-10)
         print(ys)
+        #print(ys)
         self.regressors[fid_level].fit(xs,ys)
 
     def load_data(self,data):
