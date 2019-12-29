@@ -1,4 +1,5 @@
 import numpy as np
+import math
 
 class Transformer:
     def __init__(self,data_specs,length_scales):
