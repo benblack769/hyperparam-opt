@@ -53,8 +53,8 @@ class RegressorSet:
         self.current_group = 0
         self.config = config
 
-        self.noise_hyperparam = 0.000000001
-        self.length_scales = {name: 1e-1 for name in config['dim_ranges']}
+        self.noise_hyperparam = 0.01
+        self.length_scales = {name: 0.5 for name in config['dim_ranges']}
 
         aprox_stdev = config['aprox_reward_stdev']
         # accuracy_bounds
@@ -78,21 +78,27 @@ class RegressorSet:
         self.temp_points = [point for point in self.temp_points
                                     if not point.expired(time_limit)]
 
+    def max_reward(self):
+        all_points = self.data_points+self.temp_points
+        rewards = [x.reward for x in all_points]
+        return max(rewards)
+
     def retrain(self,fid_level):
         self.regressors[fid_level] = sklearn.gaussian_process.GaussianProcessRegressor(
             kernel=sklearn.gaussian_process.kernels.RBF(length_scale=1.0),# length scales get handled in data preprocessing
             alpha=self.noise_hyperparam,
-            optimizer=None
+            optimizer=None,
+            #normalize_y=True
         )
         self.remove_old_temp_points()
         all_points = self.data_points+self.temp_points
         fid_points = [point for point in all_points if point.fid_level == fid_level]
         if not fid_points:
             return
-        print("trained!!!!!!!!\n!!!!!\n!!!!!!!\n")
-        print(fid_points[0].coord)
         xs = np.stack([self.transformer.transform_point(p.coord) for p in fid_points])
         ys = np.asarray([p.reward for p in fid_points],dtype=np.float64)
+        ys -= self.max_reward()
+        print(ys)
         self.regressors[fid_level].fit(xs,ys)
 
     def load_data(self,data):
@@ -148,7 +154,7 @@ class RegressorSet:
             return first_point,first_fidelity
 
         d = len(self.config['dim_ranges'])
-        beta = 200*0.2*math.log(t+1)*d #standard formula for beta
+        beta = 0.2*math.log(t+1)*d #standard formula for beta
         zetas = self.accuracy_bounds
 
         def neg_upper_confidence_bound(x):
