@@ -63,6 +63,39 @@ def autotune(config,data_points):
 
     return out_noise
 
+def autotune_metric(noise_level,config,data_points,length_scales):
+    regset = RegressorSet(config)
+    regset.data_points = data_points
+    regset.transformer = Transformer(config['dim_ranges'],length_scales)
+    out_noise = -1e100
+    fid_level = 0
+    kernel = sklearn.gaussian_process.kernels.RBF(length_scale=1.0)
+    regset.regressors[fid_level] = sklearn.gaussian_process.GaussianProcessRegressor(
+        kernel=kernel,# length scales get handled in data preprocessing
+        alpha=noise_level,
+        optimizer=None
+    )
+    regset.retrain(fid_level)
+    new_value = regset.regressors[fid_level].log_marginal_likelihood_value_
+    #cur_noise = regset.regressors[fid_level].kernel_
+    #out_noise = max(out_noise,regset.regressors[fid_level].alpha_)
+    out_noise = newkern.k2.noise_level
+    return out_noise
+
+
+def autotune_direct(config,data_points,length_scales):
+    def eval_fn(x):
+        val = math.exp(x)
+        out_value = autotune_metric(val,config,data_points)
+        return -out_value
+
+    search_depth = 12
+    out_noise_log = binary_search(eval_fn,math.log(1e-7),math.log(1e5),search_depth)
+    out_noise = math.exp(out_noise_log)
+
+    return out_noise
+
+
 def autotune_sklearn(config,data_points,length_scales):
     if len(data_points) < 2:
         return 0.1
@@ -72,10 +105,11 @@ def autotune_sklearn(config,data_points,length_scales):
     out_noise = -1e100
     fid_level = 0
     kernel = sklearn.gaussian_process.kernels.RBF(length_scale=1.0, length_scale_bounds=(1.0, 1.0)) \
-        + sklearn.gaussian_process.kernels.WhiteKernel(noise_level=1e-1, noise_level_bounds=(1e-10, 1e+5))
+        + sklearn.gaussian_process.kernels.WhiteKernel(noise_level=1e-1, noise_level_bounds=(1e-3, 1e4))
     regset.regressors[fid_level] = sklearn.gaussian_process.GaussianProcessRegressor(
         kernel=kernel,# length scales get handled in data preprocessing
-        alpha=0.0
+        alpha=0.0,
+        n_restarts_optimizer=20
     )
     regset.retrain(fid_level)
     newkern = regset.regressors[fid_level].kernel_
@@ -104,18 +138,25 @@ class RegressorSet:
         self.autotune = config['autotune']
 
         self.noise_hyperparam = 0.1
-        self.length_scales = {name: 6 for name in config['dim_ranges']}
+        ORIG_LEN_SCALE = 50
+        self.length_scales = {name: ORIG_LEN_SCALE for name in config['dim_ranges']}
 
         aprox_stdev = config['aprox_reward_stdev']
         # accuracy_bounds
         self.accuracy_bounds = [aprox_stdev/10]*(num_fidelities-1)+[0.0]
         # accuracy_targets
         self.accuracy_targets = [aprox_stdev/10]*(num_fidelities-1)+[0.0]
-        # different regressors for the different fidelity levels
+        x eD different regressors for the different fidelity levels
         self.regressors = [None]*num_fidelities
         self.transformer = Transformer(config['dim_ranges'],self.length_scales)
 
         self.reset_hyperparams()
+        num_trans_dims = self.transformer.num_transformed_dims()
+        for x in range(2*len(self.length_scales)):
+            invpoint = np.random.uniform(0,1/ORIG_LEN_SCALE,size=num_trans_dims)
+            point = self.transformer.inverse_point(invpoint)
+            self.queued_points.append(DataPoint(point,0.0,self.current_group,0))
+            self.current_group += 1
 
     def reset_hyperparams(self):
         self.transformer = Transformer(self.config['dim_ranges'],self.length_scales)
@@ -147,7 +188,7 @@ class RegressorSet:
     def retrain(self,fid_level):
         #if self.autotune and len(self.data_points) % 10 == 6:
         #    autotuned_res = autotune(self.config,self.data_points)
-
+        #print("lenpoints: ", len(self.data_points))
         self.remove_old_temp_points()
         all_points = self.data_points+self.temp_points
         fid_points = [point for point in all_points if point.fid_level == fid_level]
@@ -161,6 +202,7 @@ class RegressorSet:
         ys -= median_reward
         ys /= 2*(max_reward-median_reward+1e-10)
         #print(ys)
+        #print(xs)
         self.regressors[fid_level].fit(xs,ys)
 
     def load_data(self,data):

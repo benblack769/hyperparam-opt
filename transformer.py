@@ -16,6 +16,12 @@ class Transformer:
             ordered_scales.append(vals[name])
         return ordered_scales
 
+    def num_transformed_dims(self):
+        count = 0
+        for trans in self.transforms:
+            count += trans['disc_val'] if trans['disc_val'] else 1
+        return count
+
     def transform_point(self,val):
         result = []
         for name,trans in zip(self.ordering,self.transforms):
@@ -27,6 +33,8 @@ class Transformer:
             else:
                 if trans['log']:
                     cur_val = math.log(cur_val)
+                if trans['offset']:
+                    cur_val -= trans['offset']
                 if trans['scale']:
                     cur_val /= trans['scale']
                 result.append(cur_val)
@@ -43,6 +51,8 @@ class Transformer:
                 currange = np.asarray(self.data_specs[name]['range'],dtype=np.float64)
                 if trans['log']:
                     currange = np.log(currange)
+                if trans['offset']:
+                    currange -= trans['offset']
                 if trans['scale']:
                     currange /= trans['scale']
                 result.append(currange)
@@ -63,6 +73,8 @@ class Transformer:
                 cur_val = np_arr[cur_idx]
                 if trans['scale']:
                     cur_val *= trans['scale']
+                if trans['offset']:
+                    cur_val += trans['offset']
                 if trans['log']:
                     cur_val = math.exp(cur_val)
                 res[name] = cur_val
@@ -80,6 +92,7 @@ class Transformer:
                 scale_val = (end-start)*length_scales[name]
                 transforms[name] = {
                     "scale":scale_val,
+                    "offset":start,
                     "log": False,
                     "disc_val": 0
                 }
@@ -90,6 +103,7 @@ class Transformer:
                 scale_val = (endl-startl)*length_scales[name]
                 transforms[name] = {
                     "scale":scale_val,
+                    "offset":startl,
                     "log": True,
                     "disc_val": 0
                 }
@@ -97,6 +111,7 @@ class Transformer:
                 scale_val = length_scales[name]
                 transforms[name] = {
                     "scale":scale_val,
+                    "offset":0,
                     "log": False,
                     "disc_val": specs['possibilities']
                 }
