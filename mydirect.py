@@ -15,7 +15,7 @@ class Rectangle(object):
     def center(self):
         return (self.lb+self.ub)/2
 
-def direct(f, bounds, maxsample=None):
+def direct(f, bounds, maxsample=None,debug=False):
     def eval_points(xs):
         nonlocal num_samples,best_point
         xprimes = trans(xs)# * (bounds[:,1]-bounds[:,0]) + bounds[:,0]
@@ -24,7 +24,7 @@ def direct(f, bounds, maxsample=None):
         miny = ys[minidx]
         minx = xs[minidx]
 
-        num_samples += len(xs)
+        num_samples += 1#len(xs)
 
         if len(best_point) == 0 or miny < best_point[0]:
             best_point = [miny,minx]
@@ -58,10 +58,13 @@ def direct(f, bounds, maxsample=None):
             print('Reached maximum samples.')
             print(best_point)
             final_point = [best_point[0],trans(best_point[1])]
-            report_rects = [Rectangle(trans(r.lb), trans(r.ub), r.y) for r in rectangles]
-            return (final_point,{
-                "rectangles": report_rects
-            })
+            if debug:
+                report_rects = [Rectangle(trans(r.lb), trans(r.ub), r.y) for r in rectangles]
+                return (final_point,{
+                    "rectangles": report_rects
+                })
+            else:
+                return final_point
 
 
         # find potentially optimal rectangles
@@ -94,7 +97,6 @@ def direct(f, bounds, maxsample=None):
                     break
 
             else:
-                print("argvar")
                 # last check...
                 if not minI2:
                     potopts.append(Rj)
@@ -122,8 +124,6 @@ def direct(f, bounds, maxsample=None):
 
         xs = np.stack(test_divs)
         ys = eval_points(xs)
-        print(trans(xs))
-        print(ys)
 
         new_eval_rectangles = []
         new_no_eval_rectangles = []
@@ -186,8 +186,6 @@ def direct(f, bounds, maxsample=None):
 
         rectangles += new_eval_rectangles
         rectangles += new_no_eval_rectangles
-        print(len(potopts))
-        print(len(rectangles))
 
 
 

@@ -4,7 +4,7 @@ import time
 import sklearn
 import random
 import sklearn.gaussian_process
-import scipydirect
+from mydirect import direct
 import math
 import json
 
@@ -146,7 +146,7 @@ class RegressorSet:
         self.accuracy_bounds = [aprox_stdev/10]*(num_fidelities-1)+[0.0]
         # accuracy_targets
         self.accuracy_targets = [aprox_stdev/10]*(num_fidelities-1)+[0.0]
-        x eD different regressors for the different fidelity levels
+        #x eD different regressors for the different fidelity levels
         self.regressors = [None]*num_fidelities
         self.transformer = Transformer(config['dim_ranges'],self.length_scales)
 
@@ -269,20 +269,21 @@ class RegressorSet:
             for zeta,reg in zip(zetas,self.regressors):
                 mean,stdev = reg.predict(x, return_std=True)
                 ucbs.append(mean + stdev * beta + zeta)
-            true_ucb = min(ucbs)
+            ucbs = np.stack(ucbs)
+            true_ucb = np.min(ucbs,axis=0)
             return -true_ucb
-        min_val = scipydirect.minimize(neg_upper_confidence_bound,bounds,algmethod=1)
+        min_y,min_x = direct(neg_upper_confidence_bound,bounds,maxsample=70)
 
         acc_targets = self.accuracy_targets
         out_fid_level = num_fidelities-1# defaults to highest fidelity function
         for fid_level,(acc,reg) in enumerate(zip(acc_targets,self.regressors)):
-            mean,stdev = reg.predict([min_val.x], return_std=True)
+            mean,stdev = reg.predict([min_x], return_std=True)
             if stdev*beta > acc:
                 out_fid_level = fid_level
                 out_stdevs = stdev/self.noise_hyperparam
                 break
 
-        xval = self.transformer.inverse_point(min_val.x)
+        xval = self.transformer.inverse_point(min_x)
         #yval = -neg_upper_confidence_bound([xval])
         return xval,out_fid_level,out_stdevs
 
