@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 import numpy as np
 from numpy import copy
+import random
 
 class Rectangle(object):
     """docstring for Rectangle"""
@@ -24,7 +25,7 @@ def direct(f, bounds, maxsample=None,debug=False):
         miny = ys[minidx]
         minx = xs[minidx]
 
-        num_samples += 1#len(xs)
+        num_samples += len(xs)
 
         if len(best_point) == 0 or miny < best_point[0]:
             best_point = [miny,minx]
@@ -152,8 +153,8 @@ def direct(f, bounds, maxsample=None,debug=False):
             oldrect = rect
             for _,i in vals:
                 dwidth = oldrect.ub[i] - oldrect.lb[i]
-                split1 = oldrect.lb[i] + dwidth * (1/3)
-                split2 = oldrect.lb[i] + dwidth * (2/3)
+                split1 = oldrect.lb[i] + dwidth * ((1/3)+(0.5-random.random())/12)
+                split2 = oldrect.lb[i] + dwidth * ((2/3)+(0.5-random.random())/12)
 
                 idx += 1
 
@@ -207,7 +208,7 @@ def demoDIRECT():
         return np.sin(x[:,0]*2)+np.abs(x[:,0]-15) + np.sin(x[:,1])+.2*np.abs(x[:,1]-6)
 
     bounds = [(1.2, 28.), (0.1, 13.)]
-    optimum, report = direct(foo, bounds, maxsample=900)
+    optimum, report = direct(foo, bounds, maxsample=900,debug=True)
 
     plt.figure(1)
     plt.clf()

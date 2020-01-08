@@ -105,11 +105,11 @@ def autotune_sklearn(config,data_points,length_scales):
     out_noise = -1e100
     fid_level = 0
     kernel = sklearn.gaussian_process.kernels.RBF(length_scale=1.0, length_scale_bounds=(1.0, 1.0)) \
-        + sklearn.gaussian_process.kernels.WhiteKernel(noise_level=1e-1, noise_level_bounds=(1e-3, 1e4))
+        + sklearn.gaussian_process.kernels.WhiteKernel(noise_level=1e-1, noise_level_bounds=(1e-5, 1e4))
     regset.regressors[fid_level] = sklearn.gaussian_process.GaussianProcessRegressor(
         kernel=kernel,# length scales get handled in data preprocessing
         alpha=0.0,
-        n_restarts_optimizer=20
+        n_restarts_optimizer=10
     )
     regset.retrain(fid_level)
     newkern = regset.regressors[fid_level].kernel_
@@ -272,7 +272,7 @@ class RegressorSet:
             ucbs = np.stack(ucbs)
             true_ucb = np.min(ucbs,axis=0)
             return -true_ucb
-        min_y,min_x = direct(neg_upper_confidence_bound,bounds,maxsample=70)
+        min_y,min_x = direct(neg_upper_confidence_bound,bounds,maxsample=2000)
 
         acc_targets = self.accuracy_targets
         out_fid_level = num_fidelities-1# defaults to highest fidelity function
@@ -288,7 +288,7 @@ class RegressorSet:
         return xval,out_fid_level,out_stdevs
 
     def decrese_length_scale(self):
-        SCALE_DEC = 0.9
+        SCALE_DEC = 0.75
         min_scale_val = 1e100
         min_scale_name = ""
         for name in self.length_scales.keys():
