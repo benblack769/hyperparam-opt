@@ -43,7 +43,7 @@ def direct(f, bounds, maxsample=None,debug=False):
 
     N = len(bounds)
     rectangles = []
-    first_x = (bounds[:,1]+bounds[:,0])*0.5
+    first_x = np.ones(N)*0.5
     first_sample = eval_points(np.stack([first_x]))[0]
     first = Rectangle(np.zeros(N), np.ones(N), first_sample)
     rectangles.append(first)
@@ -56,8 +56,8 @@ def direct(f, bounds, maxsample=None,debug=False):
     while True:
         # print '[direct] iteration %d, samples = %d' % (iteration, SAMPLES)
         if maxsample and num_samples > maxsample:
-            print('Reached maximum samples.')
-            print(best_point)
+            #print('Reached maximum samples.')
+            #print(best_point)
             final_point = [best_point[0],trans(best_point[1])]
             if debug:
                 report_rects = [Rectangle(trans(r.lb), trans(r.ub), r.y) for r in rectangles]
@@ -178,7 +178,9 @@ def direct(f, bounds, maxsample=None,debug=False):
             new_no_eval_rectangles.append(oldrect)
 
         new_rect_xs = [rect.center() for rect in new_eval_rectangles]
+
         new_rect_ys = eval_points(new_rect_xs)
+
         for y,rect in zip(new_rect_ys,new_eval_rectangles):
             rect.y = y
 
@@ -208,7 +210,7 @@ def demoDIRECT():
         return np.sin(x[:,0]*2)+np.abs(x[:,0]-15) + np.sin(x[:,1])+.2*np.abs(x[:,1]-6)
 
     bounds = [(1.2, 28.), (0.1, 13.)]
-    optimum, report = direct(foo, bounds, maxsample=900,debug=True)
+    optimum, report = direct(foo, bounds, maxsample=100,debug=True)
 
     plt.figure(1)
     plt.clf()
@@ -222,7 +224,7 @@ def demoDIRECT():
     for rect in report['rectangles']:
         ax.add_artist(plt.Rectangle(rect.lb, rect.ub[0]-rect.lb[0], rect.ub[1]-rect.lb[1], fc='y', ec='k', lw=1, alpha=0.25, fill=True))
         # ax.plot([x[0] for _,x in report['fmin evolution']], [x[1] for _,x in report['fmin evolution']], 'go')
-        ax.plot([optimum[1][0]], [optimum[1][1]], 'ro')
+    ax.plot([optimum[1][0]], [optimum[1][1]], 'ro')
         # ax.text(rect.center[0], rect.center[1], '%.3f'%rect.y)
     cs = ax.contour(c0, c1, z, 10)
     ax.clabel(cs)

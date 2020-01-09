@@ -9,11 +9,12 @@ import math
 import json
 
 class DataPoint:
-    def __init__(self,coord,reward,group,fid_level):
+    def __init__(self,coord,reward,group,fid_level,stdev):
         self.coord = coord
         self.reward = reward
         self.group = group
         self.fid_level = fid_level
+        self.err_on_select = float(stdev)
 
     def to_dict(self):
         return {
@@ -21,13 +22,24 @@ class DataPoint:
             "reward":self.reward,
             "group":self.group,
             "fid_level":self.fid_level,
+            "err_on_select":self.err_on_select,
         }
     def to_temp(self):
         return TempPoint(
             self.coord,
             self.reward,
             self.group,
-            self.fid_level
+            self.fid_level,
+            self.err_on_select,
+        )
+
+    def to_data(self,reward):
+        return DataPoint(
+            self.coord,
+            reward,
+            self.group,
+            self.fid_level,
+            self.err_on_select,
         )
 
 class TempPoint(DataPoint):
@@ -37,39 +49,13 @@ class TempPoint(DataPoint):
     def expired(self,limit):
         return time.time() - self.timestamp > limit
 
-def binary_search(func,start,end,depth_to_end):
-    if depth_to_end <= 0:
-        return start
-    qval = (end - start) / 4
-    low = start + qval
-    high = start + qval * 3
-    vallow = func(low)
-    valhigh = func(high)
-    mid = start + qval * 2
-    if vallow > valhigh:
-        return binary_search(func,start,mid,depth_to_end-1)
-    else:
-        return binary_search(func,mid,end,depth_to_end-1)
-
-def autotune(config,data_points):
-    def eval_fn(x):
-        val = math.exp(x)
-        out_value = autotune_metric(val,config,data_points)
-        return -out_value
-
-    search_depth = 12
-    out_noise_log = binary_search(eval_fn,math.log(1e-7),math.log(1e5),search_depth)
-    out_noise = math.exp(out_noise_log)
-
-    return out_noise
-
 def autotune_metric(noise_level,config,data_points,length_scales):
     regset = RegressorSet(config)
     regset.data_points = data_points
     regset.transformer = Transformer(config['dim_ranges'],length_scales)
     out_noise = -1e100
     fid_level = 0
-    kernel = sklearn.gaussian_process.kernels.RBF(length_scale=1.0)
+    kernel = (sklearn.gaussian_process.kernels.RBF(length_scale=1.0))
     regset.regressors[fid_level] = sklearn.gaussian_process.GaussianProcessRegressor(
         kernel=kernel,# length scales get handled in data preprocessing
         alpha=noise_level,
@@ -79,18 +65,22 @@ def autotune_metric(noise_level,config,data_points,length_scales):
     new_value = regset.regressors[fid_level].log_marginal_likelihood_value_
     #cur_noise = regset.regressors[fid_level].kernel_
     #out_noise = max(out_noise,regset.regressors[fid_level].alpha_)
-    out_noise = newkern.k2.noise_level
-    return out_noise
+    #out_noise = newkern.k2.noise_level
+    return new_value
 
 
 def autotune_direct(config,data_points,length_scales):
     def eval_fn(x):
         val = math.exp(x)
-        out_value = autotune_metric(val,config,data_points)
+        out_value = autotune_metric(val,config,data_points,length_scales)
         return -out_value
 
-    search_depth = 12
-    out_noise_log = binary_search(eval_fn,math.log(1e-7),math.log(1e5),search_depth)
+    def batch_evan_fn(xs):
+        return np.stack([eval_fn(x) for x in xs])
+
+    search_samples = 80
+    bounds = [[math.log(1e-7),math.log(1e5)]]
+    _,out_noise_log = direct(batch_evan_fn,bounds,search_samples)
     out_noise = math.exp(out_noise_log)
 
     return out_noise
@@ -155,13 +145,14 @@ class RegressorSet:
         for x in range(2*len(self.length_scales)):
             invpoint = np.random.uniform(0,1/ORIG_LEN_SCALE,size=num_trans_dims)
             point = self.transformer.inverse_point(invpoint)
-            self.queued_points.append(DataPoint(point,0.0,self.current_group,0))
+            self.queued_points.append(DataPoint(point,0.0,self.current_group,0,0.01))
             self.current_group += 1
 
     def reset_hyperparams(self):
         self.transformer = Transformer(self.config['dim_ranges'],self.length_scales)
 
-        self.noise_hyperparam = autotune_sklearn(self.config,self.data_points,self.length_scales)
+        if self.data_points:
+            self.noise_hyperparam = autotune_sklearn(self.config,self.data_points,self.length_scales)
 
         for fid_level in range(self.num_fidelities):
             kernel = sklearn.gaussian_process.kernels.RBF(length_scale=1.0)#, length_scale_bounds=(1.0, 1.0))# \
@@ -226,25 +217,48 @@ class RegressorSet:
         group_points = [point for point in self.data_points if point.group == group]
         group_points.sort(key=lambda x: x.fid_level)
 
-        for low_idx in range(group_points):
-            for high_idx in range(i+1,group_points):
+        for low_idx in range(len(group_points)):
+            for high_idx in range(low_idx+1,len(group_points)):
                 low_fid_p = group_points[low_idx]
                 high_fid_p = group_points[high_idx]
                 low_acc = self.accuracy_bounds[low_fid_p.fid_level]
                 high_acc = self.accuracy_bounds[high_fid_p.fid_level]
 
-                if low_acc - high_acc > abs(low_fid_p.reward - high_fid_p.reward):
-                    self.accuracy_bounds[low_acc] *= 1.1
+                if low_acc - high_acc < abs(low_fid_p.reward - high_fid_p.reward):
+                    self.accuracy_bounds[low_fid_p.fid_level] = high_acc + 1.2*abs(low_fid_p.reward - high_fid_p.reward)
 
     def process_accuracy_targets(self):
+        def get_acc_targ(window,fid,k_stat):
+            if len(all_points) < window+1:
+                return 1e-50
+            start_window = len(all_points)-window
+            prev_fid_points = [point.err_on_select for point in all_points[start_window:] if point.fid_level == fid]
+            prev_stev_vals = np.asarray(prev_fid_points)
+            ordered = np.sort(prev_stev_vals)
+            print(ordered)
+            if len(ordered)+1 < k_stat:
+                return 1e-50
+            else:
+                return ordered[k_stat-1]
+
         fid_marginal_costs = self.config['aprox_fid_costs']
         fid_total_costs = [0]*self.num_fidelities
-        for point in (self.data_points+self.temp_points):
+        all_points = self.data_points+self.temp_points
+        #DECAY_PARAM = 0.99
+        for point in all_points:
             fid_total_costs[point.fid_level] += fid_marginal_costs[point.fid_level]
+        print("tot_costs: ",fid_total_costs)
 
-        for i in range(len(fid_total_costs)-1):
-            if fid_total_costs[i] > fid_total_costs[i+1]+fid_marginal_costs[i+1]*10:
-                self.accuracy_targets[i] *= 1.1
+        for i in range(1,self.num_fidelities):
+            cost_ratio = fid_marginal_costs[i]/fid_marginal_costs[0]
+            window_size = 3
+            window_five = int(cost_ratio*window_size)
+            #count_one = count_onewindow(window_one,i)
+            targ = get_acc_targ(window_five,i-1,window_size)
+            self.accuracy_targets[i-1] = targ
+
+
+        print("acctargs: ",self.accuracy_targets)
 
     def _calc_next_points(self):
         num_fidelities = self.num_fidelities
@@ -278,7 +292,7 @@ class RegressorSet:
         out_fid_level = num_fidelities-1# defaults to highest fidelity function
         for fid_level,(acc,reg) in enumerate(zip(acc_targets,self.regressors)):
             mean,stdev = reg.predict([min_x], return_std=True)
-            if stdev*beta > acc:
+            if stdev > acc:
                 out_fid_level = fid_level
                 out_stdevs = stdev/self.noise_hyperparam
                 break
@@ -296,7 +310,7 @@ class RegressorSet:
             self.reset_hyperparams()
             cur_noise = self.noise_hyperparam
             self.length_scales[name] /= SCALE_DEC
-            print(name,cur_noise)
+            #print(name,cur_noise)
             if cur_noise < min_scale_val:
                 min_scale_val = cur_noise
                 min_scale_name = name
@@ -322,8 +336,8 @@ class RegressorSet:
         tranformed_point = self.transformer.transform_point(out_point)
         for fid_level in range(out_fidlevel+1):
             reg = self.regressors[fid_level]
-            prior_val = reg.predict([tranformed_point])
-            self.queued_points.append(DataPoint(out_point,prior_val,group_num,fid_level))
+            prior_val,prior_std = reg.predict([tranformed_point],return_std=True)
+            self.queued_points.append(DataPoint(out_point,prior_val,group_num,fid_level,prior_std))
 
     def generate_next_point(self):
         if not len(self.queued_points):
@@ -333,6 +347,9 @@ class RegressorSet:
         self.queued_points.pop(0)
         self.temp_points.append(out_point.to_temp())
         self.retrain(out_point.fid_level)
+        self.process_accuracy_targets()
+        print("accbounds",self.accuracy_bounds)
+
         return out_point
 
     def add_point(self,point):
@@ -343,4 +360,5 @@ class RegressorSet:
         self.data_points.append(point)
 
         self.reset_hyperparams()
+        self.process_accuracy_bounds(point.group)
         #self.retrain(point.fid_level)

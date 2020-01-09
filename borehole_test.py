@@ -13,12 +13,13 @@ def main():
     print(config)
     regset = RegressorSet(config)
     best_point = None
-    for x in range(100):
+    for x in range(300):
         exec_point = regset.generate_next_point()
         out_value = fid_fns[exec_point.fid_level](exec_point.coord)
-        new_point = DataPoint(exec_point.coord,out_value,exec_point.group,exec_point.fid_level)
+        new_point = exec_point.to_data(out_value)
         regset.add_point(new_point)
-        print(json.dumps(new_point.to_dict(),indent=2))
+        print(new_point.fid_level,"\t",new_point.reward)
+        #print(json.dumps(new_point.to_dict(),indent=2))
         if not best_point or new_point.reward > best_point.reward:
             best_point = new_point
     print(best_point.to_dict())
