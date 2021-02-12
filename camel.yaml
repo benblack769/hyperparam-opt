@@ -11,3 +11,4 @@ aprox_fid_costs: [1,10] # should be non-zero and increasing
 num_fidelities: 2 # number of different functions that can be run
 timeout_evaluation: 100 # the amount of time that goes before it is assumed that points were not evaluated and are requested again in seconds
 autotune: True
+device: "cuda"

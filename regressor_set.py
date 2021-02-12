@@ -1,12 +1,11 @@
 import numpy as np
 from transformer import Transformer
 import time
-import sklearn
 import random
-import sklearn.gaussian_process
 from mydirect import direct
 import math
 import json
+from neural_net_regressor import NNRegressor
 
 DOT_SIG_VAL = 0.1
 
@@ -51,71 +50,6 @@ class TempPoint(DataPoint):
     def expired(self,limit):
         return time.time() - self.timestamp > limit
 
-def autotune_metric(noise_level,config,data_points,length_scales):
-    regset = RegressorSet(config)
-    regset.data_points = data_points
-    regset.transformer = Transformer(config['dim_ranges'],length_scales)
-    out_noise = -1e100
-    fid_level = 0
-    kernel = (sklearn.gaussian_process.kernels.RBF(length_scale=1.0)
-            #+ sklearn.gaussian_process.kernels.DotProduct(sigma_0=DOT_SIG_VAL)
-    )
-    regset.regressors[fid_level] = sklearn.gaussian_process.GaussianProcessRegressor(
-        kernel=kernel,# length scales get handled in data preprocessing
-        alpha=noise_level,
-        optimizer=None
-    )
-    regset.retrain(fid_level)
-    new_value = regset.regressors[fid_level].log_marginal_likelihood_value_
-    #cur_noise = regset.regressors[fid_level].kernel_
-    #out_noise = max(out_noise,regset.regressors[fid_level].alpha_)
-    #out_noise = newkern.k2.noise_level
-    return new_value
-
-
-def autotune_direct(config,data_points,length_scales):
-    def eval_fn(x):
-        val = math.exp(x)
-        out_value = autotune_metric(val,config,data_points,length_scales)
-        return -out_value
-
-    def batch_evan_fn(xs):
-        return np.stack([eval_fn(x) for x in xs])
-
-    search_samples = 80
-    bounds = [[math.log(1e-7),math.log(1e2)]]
-    _,out_noise_log = direct(batch_evan_fn,bounds,search_samples)
-    out_noise = math.exp(out_noise_log)
-
-    return out_noise
-
-
-def autotune_sklearn(config,data_points,length_scales):
-    if len(data_points) < 2:
-        return 0.1
-    regset = RegressorSet(config)
-    regset.data_points = data_points
-    regset.transformer = Transformer(config['dim_ranges'],length_scales)
-    out_noise = -1e100
-    fid_level = 0
-    kernel = (sklearn.gaussian_process.kernels.RBF(length_scale=1.0, length_scale_bounds=(1.0, 1.0))
-        #+ sklearn.gaussian_process.kernels.DotProduct(sigma_0=DOT_SIG_VAL, sigma_0_bounds=(DOT_SIG_VAL,DOT_SIG_VAL))
-        + sklearn.gaussian_process.kernels.WhiteKernel(noise_level=1e-1, noise_level_bounds=(1e-5, 1e4))
-    )
-    regset.regressors[fid_level] = sklearn.gaussian_process.GaussianProcessRegressor(
-        kernel=kernel,# length scales get handled in data preprocessing
-        alpha=0.0,
-        n_restarts_optimizer=10
-    )
-    regset.retrain(fid_level)
-    newkern = regset.regressors[fid_level].kernel_
-    #cur_noise = regset.regressors[fid_level].kernel_
-    #out_noise = max(out_noise,regset.regressors[fid_level].alpha_)
-    out_noise = newkern.k2.noise_level
-    return out_noise
-
-def set_value(config,name,default):
-    return default if name not in config else config[name]
 
 class RegressorSet:
     def __init__(self,config):
@@ -133,16 +67,18 @@ class RegressorSet:
         # a group is a set of  evaluations at different fidelities
         # but at the same point. Used for heuristic calculation.
         self.current_group = 0
-        self.low_noise_sel_count = 0
         self.config = config
         self.autotune = config['autotune']
 
-        self.INTOLERABLE_NOISE_LEVEL = set_value(config,'intolerable_noise_level',1.1)# if in
-        self.MAX_LEVEL = set_value(config,'max_scale_val',0.5)
-        self.MEDIAN_LEVEL = set_value(config,'median_scale_val',-1.0)
+
+        self.MAX_LEVEL = config.get('max_scale_val',0.5)
+        self.MEDIAN_LEVEL = config.get('median_scale_val',-1.0)
+        self.num_nns = config.get('num_nns', 100)
+        self.nn_hidden_size = config.get('nn_hidden_size', 256)
+        self.device = config.get('device', 'cpu')
 
         self.noise_hyperparam = 0.1
-        ORIG_LEN_SCALE = 10*math.sqrt(len(config['dim_ranges']))
+        ORIG_LEN_SCALE = 1
         self.length_scales = {name: ORIG_LEN_SCALE for name in config['dim_ranges']}
 
         aprox_stdev = config['aprox_reward_stdev']
@@ -156,34 +92,15 @@ class RegressorSet:
         self.cur_mean = 0.0
         self.cur_max = 0.0
 
-        self.reset_hyperparams()
+        for fid_level in range(self.num_fidelities):
+            self.regressors[fid_level] = NNRegressor(self.num_nns, self.nn_hidden_size, device=self.device)
+            self.retrain(fid_level)
         num_trans_dims = self.transformer.num_transformed_dims()
         for x in range(2*len(self.length_scales)):
             invpoint = np.random.uniform(0,1/ORIG_LEN_SCALE,size=num_trans_dims)
             point = self.transformer.inverse_point(invpoint)
             self.queued_points.append(DataPoint(point,0.0,self.current_group,0,0.01))
             self.current_group += 1
-
-    def reset_hyperparams(self):
-        self.transformer = Transformer(self.config['dim_ranges'],self.length_scales)
-
-        if self.data_points:
-            self.noise_hyperparam = autotune_direct(self.config,self.data_points,self.length_scales)
-
-        for fid_level in range(self.num_fidelities):
-            kernel = (
-                sklearn.gaussian_process.kernels.RBF(length_scale=1.0)  #, length_scale_bounds=(1.0, 1.0))# \
-                #+ sklearn.gaussian_process.kernels.DotProduct(sigma_0=DOT_SIG_VAL)
-            )
-            #    + sklearn.gaussian_process.kernels.WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-10, 1e+5))
-
-            self.regressors[fid_level] = sklearn.gaussian_process.GaussianProcessRegressor(
-                kernel=kernel,# length scales get handled in data preprocessing
-                alpha=self.noise_hyperparam,
-                optimizer=None,
-                #normalize_y=True
-            )
-            self.retrain(fid_level)
 
     def remove_old_temp_points(self):
         time_limit = self.config['timeout_evaluation']
@@ -259,7 +176,6 @@ class RegressorSet:
             "current_group": self.current_group,
             "config": self.config,
             "noise_hyperparam": self.noise_hyperparam,
-            "length_scales": self.length_scales,
             "accuracy_bounds": self.accuracy_bounds,
             "accuracy_targets": self.accuracy_targets,
         })
@@ -361,33 +277,6 @@ class RegressorSet:
         #yval = -neg_upper_confidence_bound([xval])
         return xval,out_fid_level,out_stdevs,zero_stdev
 
-    def decrese_length_scale(self):
-        SCALE_DEC = 0.6
-        min_scale_val = -1e100
-        min_scale_name = ""
-        print("scale vals:")
-        for name in self.length_scales.keys():
-            self.length_scales[name] *= SCALE_DEC
-            self.reset_hyperparams()
-            _,_,_,cur_scale_val = self._calc_next_points(False)
-            #cur_noise = self.noise_hyperparam
-            print(cur_scale_val)
-            self.length_scales[name] /= SCALE_DEC
-            #print(name,cur_noise)
-            if cur_scale_val > min_scale_val:
-                min_scale_val = cur_scale_val
-                min_scale_name = name
-
-        largest_scale = max(self.length_scales.values())
-        if self.length_scales[min_scale_name]*10 > largest_scale:
-            self.length_scales[min_scale_name] *= SCALE_DEC
-        else:
-            for name in self.length_scales:
-                self.length_scales[name] *= SCALE_DEC
-        print(self.length_scales.values())
-        self.reset_hyperparams()
-
-
     def _queue_point(self):
         out_point,out_fidlevel,out_stdevs,_ = self._calc_next_points()
 
@@ -395,16 +284,6 @@ class RegressorSet:
         print(self.noise_hyperparam)
         print("out_stevs")
         print(out_stdevs)
-        if out_stdevs < self.INTOLERABLE_NOISE_LEVEL:
-            self.low_noise_sel_count += 1
-        if self.low_noise_sel_count >= 1:
-            self.low_noise_sel_count = 0
-            while out_stdevs < self.INTOLERABLE_NOISE_LEVEL:
-                self.decrese_length_scale()
-                print("noise adjusted")
-                print(self.noise_hyperparam)
-                out_point,out_fidlevel,out_stdevs,_ = self._calc_next_points()
-
 
         group_num = self.current_group
         self.current_group += 1
@@ -436,6 +315,5 @@ class RegressorSet:
                 break
         self.data_points.append(point)
 
-        self.reset_hyperparams()
         self.process_accuracy_bounds(point.group)
-        #self.retrain(point.fid_level)
+        self.retrain(point.fid_level)

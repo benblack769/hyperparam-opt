@@ -73,7 +73,7 @@ def camelTest():
     # ax.set_title('optimization evolution')
     # ax.set_xlabel('iteration')
     # ax.set_ylabel('fmin')
-    plt.show()
+    plt.savefig("fig.png")
 
 if __name__ == "__main__":
     camelTest()
