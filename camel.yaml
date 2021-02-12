@@ -1,0 +1,13 @@
+dim_ranges:
+    dim1:
+        type: continuous
+        range: [1.2,28.0]
+    dim2:
+        type: continuous
+        range: [0.1,13.0]
+num_fidelities: 1
+aprox_reward_stdev: 0.5 # helps define initial values for multifidelity parameters
+aprox_fid_costs: [1,10] # should be non-zero and increasing
+num_fidelities: 2 # number of different functions that can be run
+timeout_evaluation: 100 # the amount of time that goes before it is assumed that points were not evaluated and are requested again in seconds
+autotune: True
