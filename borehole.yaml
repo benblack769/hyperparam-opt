@@ -1,4 +1,5 @@
 dim_ranges:
+    # source: https://www.sfu.ca/~ssurjano/borehole.html
     rad_borehole:
         type: continuous
         range: [0.05,0.15]

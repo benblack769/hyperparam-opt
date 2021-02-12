@@ -1,4 +1,7 @@
 from math import pi,log
+import random
+
+# source: https://www.sfu.ca/~ssurjano/borehole.html
 
 def borehole(xx):
     rw = xx["rad_borehole"]
@@ -36,4 +39,4 @@ def low_fidelity_borehole(xx):
     frac2 = log(r/rw) * (1.5+frac2a+frac2b)
 
     y = frac1 / frac2
-    return(y)
+    return(y) + random.random()*10
